@@ -44,6 +44,14 @@ def classify_question(state: AgentState) -> dict:
     return {"route": route, "current_step": "classified"}
 
 
+ROUTE_INSTRUCTIONS = {
+    "calculation": "IMPORTANT: You MUST call the `calculator` tool right now to answer this. Do NOT calculate in your head.",
+    "web_search": "IMPORTANT: You MUST call the `web_search` tool right now to answer this. Do NOT answer from your own knowledge — use the tool.",
+    "sql": "IMPORTANT: You MUST call the `sql_query` tool right now to answer this from the uploaded database.",
+    "document": "IMPORTANT: You MUST call the `document_search` tool right now to answer this from the uploaded documents.",
+}
+
+
 def agent_node(state: AgentState) -> dict:
     """Call the LLM with the current messages and bound tools."""
     llm = build_chat_model(state["provider"], state["model_name"], state.get("api_key"))
@@ -57,6 +65,13 @@ def agent_node(state: AgentState) -> dict:
     messages = state["messages"]
     if not messages or not isinstance(messages[0], SystemMessage):
         messages = [SystemMessage(content=SYSTEM_PROMPT)] + list(messages)
+
+    # Inject route instruction so the LLM knows which tool to use
+    route = state.get("route")
+    if route and route in ROUTE_INSTRUCTIONS:
+        messages = list(messages) + [
+            SystemMessage(content=ROUTE_INSTRUCTIONS[route])
+        ]
 
     response = llm_with_tools.invoke(messages)
     return {"messages": [response]}
