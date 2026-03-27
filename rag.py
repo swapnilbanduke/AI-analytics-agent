@@ -27,7 +27,12 @@ def _get_embeddings() -> OpenAIEmbeddings:
     if not api_key:
         try:
             import streamlit as st
-            api_key = st.session_state.get("_resolved_api_key", "")
+            # If provider is OpenAI, the resolved key is the OpenAI key
+            if st.session_state.get("provider", "openai") == "openai":
+                api_key = st.session_state.get("_resolved_api_key", "")
+            # Also try the raw api_key input (works if user typed OpenAI key)
+            if not api_key:
+                api_key = st.session_state.get("api_key", "")
         except Exception:
             pass
     if not api_key:
