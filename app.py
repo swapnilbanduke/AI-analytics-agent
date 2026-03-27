@@ -15,8 +15,14 @@ from config import (
     resolve_api_key,
     resolve_model,
 )
-from graph import process_question
+from graph import build_agent_graph, process_question
 from styles import inject_styles
+
+
+# File extensions that go to SQL (structured data)
+DATA_EXTENSIONS = {".csv", ".xlsx", ".xls"}
+# File extensions that go to RAG (documents)
+DOC_EXTENSIONS = {".pdf", ".txt", ".md", ".doc", ".docx"}
 
 
 # ========================
@@ -34,7 +40,6 @@ def init_session_state():
         "tables": [],
         "has_documents": False,
         "uploaded_files": [],
-        "uploaded_docs": [],
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -42,25 +47,34 @@ def init_session_state():
 
 
 # ========================
-# Data upload helpers
+# Smart file upload — auto-detect type
 # ========================
 
-def handle_data_upload(uploaded_file):
-    """Ingest an uploaded CSV/Excel file into the SQLite database."""
+def handle_file_upload(uploaded_file):
+    """Auto-detect file type and route to SQL ingestion or RAG indexing."""
+    file_name = uploaded_file.name
+    ext = os.path.splitext(file_name)[1].lower()
+
+    if ext in DATA_EXTENSIONS:
+        _ingest_data(uploaded_file, file_name, ext)
+    elif ext in DOC_EXTENSIONS:
+        _index_document(uploaded_file, file_name, ext)
+    else:
+        st.error(f"Unsupported file type: {ext}")
+
+
+def _ingest_data(uploaded_file, file_name, ext):
+    """Ingest CSV/Excel into SQLite database."""
     from database import list_tables
     from ingestion import ingest_csv, ingest_excel
 
-    file_name = uploaded_file.name
     file_bytes = uploaded_file.getvalue()
     table_name = file_name.rsplit(".", 1)[0]
 
-    if file_name.endswith(".csv"):
+    if ext == ".csv":
         result = ingest_csv(file_bytes, table_name=table_name)
-    elif file_name.endswith((".xlsx", ".xls")):
-        result = ingest_excel(file_bytes)
     else:
-        st.error(f"Unsupported file type: {file_name}")
-        return
+        result = ingest_excel(file_bytes)
 
     st.session_state["tables"] = list_tables()
     st.session_state["uploaded_files"].append(file_name)
@@ -68,36 +82,32 @@ def handle_data_upload(uploaded_file):
     if isinstance(result, dict) and result.get("success"):
         rows = result.get("rows", "?")
         tbl = result.get("table_name", table_name)
-        st.success(f"Loaded **{file_name}** → table `{tbl}` ({rows} rows)")
+        st.success(f"**{file_name}** → SQL table `{tbl}` ({rows} rows)")
     elif isinstance(result, dict) and result.get("tables"):
         for t in result["tables"]:
             st.success(f"Sheet **{t['original_sheet_name']}** → `{t['sql_table_name']}` ({t['rows']} rows)")
 
 
-def handle_doc_upload(uploaded_file):
-    """Ingest an uploaded document into the RAG vector store."""
-    import os
+def _index_document(uploaded_file, file_name, ext):
+    """Index PDF/text/Word into RAG vector store."""
     import tempfile
 
     try:
         from rag import add_documents
 
-        file_name = uploaded_file.name
         file_bytes = uploaded_file.getvalue()
 
-        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file_name)[1]) as tmp:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as tmp:
             tmp.write(file_bytes)
             tmp_path = tmp.name
 
-        add_documents(tmp_path, collection_name="default")
+        chunks = add_documents(tmp_path, collection_name="default")
         os.unlink(tmp_path)
 
         st.session_state["has_documents"] = True
-        st.session_state["uploaded_docs"].append(file_name)
-        st.success(f"Indexed **{file_name}** for document search")
+        st.session_state["uploaded_files"].append(file_name)
+        st.success(f"**{file_name}** → Indexed for document search ({chunks} chunks)")
 
-    except ImportError:
-        st.warning("Document search not available yet (Layer 4)")
     except Exception as exc:
         st.error(f"Error indexing document: {exc}")
 
@@ -159,33 +169,28 @@ def render_sidebar():
 
         st.divider()
 
-        # --- Data Upload ---
-        st.markdown("### Data")
-        data_file = st.file_uploader(
-            "Upload CSV / Excel",
-            type=["csv", "xlsx", "xls"],
-            key="data_uploader",
+        # --- Single unified file upload ---
+        st.markdown("### Upload Files")
+        st.caption("CSV/Excel → SQL database | PDF/Text → Document search")
+        uploaded = st.file_uploader(
+            "Drop any file",
+            type=["csv", "xlsx", "xls", "pdf", "txt", "md"],
+            accept_multiple_files=True,
+            key="file_uploader",
         )
-        if data_file and data_file.name not in st.session_state.get("uploaded_files", []):
-            handle_data_upload(data_file)
+        if uploaded:
+            for f in uploaded:
+                if f.name not in st.session_state.get("uploaded_files", []):
+                    handle_file_upload(f)
 
+        # Show what's loaded
         if st.session_state.get("tables"):
-            st.caption(f"Tables: {', '.join(st.session_state['tables'])}")
-
-        st.divider()
-
-        # --- Document Upload ---
-        st.markdown("### Documents")
-        doc_file = st.file_uploader(
-            "Upload PDF / Text",
-            type=["pdf", "txt", "md"],
-            key="doc_uploader",
-        )
-        if doc_file and doc_file.name not in st.session_state.get("uploaded_docs", []):
-            handle_doc_upload(doc_file)
-
-        if st.session_state.get("uploaded_docs"):
-            st.caption(f"Docs: {', '.join(st.session_state['uploaded_docs'])}")
+            st.caption(f"SQL tables: {', '.join(st.session_state['tables'])}")
+        if st.session_state.get("has_documents"):
+            doc_names = [n for n in st.session_state.get("uploaded_files", [])
+                         if os.path.splitext(n)[1].lower() in DOC_EXTENSIONS]
+            if doc_names:
+                st.caption(f"Documents: {', '.join(doc_names)}")
 
         st.divider()
 
@@ -227,6 +232,68 @@ def render_welcome():
                 <p>{desc}</p>
             </div>
             """, unsafe_allow_html=True)
+
+
+# ========================
+# Graph visualization
+# ========================
+
+def render_graph_tab():
+    """Render the LangGraph agent architecture as a visual diagram."""
+    st.markdown("### Agent Graph Architecture")
+    st.markdown("This is the live LangGraph that processes every question.")
+
+    has_db = bool(st.session_state.get("tables"))
+    has_docs = st.session_state.get("has_documents", False)
+
+    # Try to render the real graph from LangGraph
+    try:
+        graph = build_agent_graph(has_database=has_db, has_documents=has_docs)
+        mermaid_code = graph.get_graph().draw_mermaid()
+        st.markdown(f"```mermaid\n{mermaid_code}\n```")
+        st.caption("Auto-generated from LangGraph StateGraph")
+    except Exception:
+        pass
+
+    st.divider()
+    st.markdown("### Detailed Flow")
+    st.markdown("""
+```
+User Question
+     │
+     ▼
+┌──────────────┐
+│   Classify   │  LLM picks the best route
+└──────┬───────┘
+       │
+       ├── calculation ──→ 🔢 Calculator Tool
+       ├── web_search ───→ 🌐 Tavily Web Search
+       ├── sql ──────────→ 🗄️ SQL Query Tool (NL → SQL → Execute)
+       ├── document ─────→ 📄 Document Search (ChromaDB RAG)
+       └── direct ───────→ 💬 LLM Direct Answer
+              │
+              ▼
+       ┌─────────────┐
+       │ Agent Loop   │  LLM ↔ Tools (repeat until done)
+       └──────┬──────┘
+              │
+              ▼
+         Final Answer
+```
+""")
+
+    # Show active tools
+    st.markdown("### Active Tools")
+    tools_data = [
+        ("calculator", "Safe math evaluation via AST", True),
+        ("web_search", "Tavily search API", bool(os.environ.get("TAVILY_API_KEY"))),
+        ("sql_query", f"NL2SQL on tables: {', '.join(st.session_state.get('tables', []))}" if has_db else "No data uploaded", has_db),
+        ("document_search", "ChromaDB vector similarity", has_docs),
+    ]
+    for name, desc, active in tools_data:
+        status = "Active" if active else "Inactive"
+        icon = "🟢" if active else "⚪"
+        st.markdown(f"{icon} **{name}** — {desc} *({status})*")
 
 
 # ========================
@@ -281,67 +348,68 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    # Show welcome screen or chat history
-    if not st.session_state["chat_history"]:
-        render_welcome()
+    # Tabs: Chat | Agent Graph
+    chat_tab, graph_tab = st.tabs(["Chat", "Agent Graph"])
 
-    render_chat()
+    with graph_tab:
+        render_graph_tab()
 
-    # Chat input
-    if prompt := st.chat_input("Ask me anything..."):
-        # Check API key
-        resolved_key = resolve_api_key(
-            st.session_state["provider"],
-            st.session_state.get("api_key", ""),
-        )
-        if not resolved_key:
-            st.error("Please provide an API key in the sidebar.")
-            return
+    with chat_tab:
+        if not st.session_state["chat_history"]:
+            render_welcome()
 
-        # Store resolved key for tools to access
-        st.session_state["_resolved_api_key"] = resolved_key
+        render_chat()
 
-        # Add user message
-        st.session_state["chat_history"].append({
-            "role": "user",
-            "content": prompt,
-        })
+        # Chat input
+        if prompt := st.chat_input("Ask me anything..."):
+            resolved_key = resolve_api_key(
+                st.session_state["provider"],
+                st.session_state.get("api_key", ""),
+            )
+            if not resolved_key:
+                st.error("Please provide an API key in the sidebar.")
+                return
 
-        with st.chat_message("user"):
-            st.markdown(prompt)
+            st.session_state["_resolved_api_key"] = resolved_key
 
-        # Process
-        with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                result = process_question(
-                    question=prompt,
-                    provider=st.session_state["provider"],
-                    model_name=resolve_model(
-                        st.session_state["provider"],
-                        st.session_state["model_name"],
-                    ),
-                    api_key=resolved_key,
-                    tables=st.session_state.get("tables", []),
-                    has_documents=st.session_state.get("has_documents", False),
-                )
+            st.session_state["chat_history"].append({
+                "role": "user",
+                "content": prompt,
+            })
 
-            route = result.get("route")
-            if route:
-                label = ROUTE_LABELS.get(route, route)
-                st.markdown(
-                    f'<span class="route-badge route-{route}">{label}</span>',
-                    unsafe_allow_html=True,
-                )
+            with st.chat_message("user"):
+                st.markdown(prompt)
 
-            answer = result.get("answer", "I couldn't generate an answer.")
-            st.markdown(answer)
+            with st.chat_message("assistant"):
+                with st.spinner("Thinking..."):
+                    result = process_question(
+                        question=prompt,
+                        provider=st.session_state["provider"],
+                        model_name=resolve_model(
+                            st.session_state["provider"],
+                            st.session_state["model_name"],
+                        ),
+                        api_key=resolved_key,
+                        tables=st.session_state.get("tables", []),
+                        has_documents=st.session_state.get("has_documents", False),
+                    )
 
-        # Save to history
-        st.session_state["chat_history"].append({
-            "role": "assistant",
-            "content": answer,
-            "route": route,
-        })
+                route = result.get("route")
+                if route:
+                    label = ROUTE_LABELS.get(route, route)
+                    st.markdown(
+                        f'<span class="route-badge route-{route}">{label}</span>',
+                        unsafe_allow_html=True,
+                    )
+
+                answer = result.get("answer", "I couldn't generate an answer.")
+                st.markdown(answer)
+
+            st.session_state["chat_history"].append({
+                "role": "assistant",
+                "content": answer,
+                "route": route,
+            })
 
 
 if __name__ == "__main__":

@@ -39,13 +39,15 @@ Categories:
 - "calculation" — math, arithmetic, percentages, unit conversions
 - "web_search" — current events, live prices, product prices, recent news, stock prices, weather, anything requiring up-to-date or real-world information NOT in the uploaded data
 - "sql" — questions specifically about the user's uploaded data/tables (statistics, aggregations, trends in THEIR dataset)
-- "document" — questions specifically about uploaded documents, reports, PDFs, policies
+- "document" — questions about uploaded documents, reports, PDFs, resumes, policies, or about a person/topic mentioned in the documents
 - "direct" — general knowledge, explanations, definitions, how-to questions that don't need tools
 
 Important rules:
-- "sql" is ONLY for questions about the user's own uploaded dataset. Questions like "price of iPhone", "who is the president", "current GDP" are NOT sql — they are "web_search".
-- If the question asks about real-world facts, prices, people, or current events, choose "web_search" even if a database is available.
-- Only choose "sql" if the question clearly refers to the uploaded data (e.g., "top products in the data", "average sales", "how many rows").
+- "sql" is ONLY for questions about the user's own uploaded dataset (CSV/Excel data). Questions like "price of iPhone", "who is the president", "how much experience does someone have" are NOT sql.
+- If the question asks about real-world facts, prices, current events, or anything that needs up-to-date information, choose "web_search".
+- If the question asks about a person's experience, skills, qualifications, or anything that could be in a resume/report, AND documents are uploaded, choose "document".
+- If the question asks about a person or topic and documents are available, prefer "document" over "web_search".
+- Only choose "sql" if the question clearly refers to tabular data (e.g., "top products in the data", "average sales", "how many orders", "revenue by region").
 
 Respond with ONLY the category name, nothing else.
 
