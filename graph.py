@@ -70,7 +70,7 @@ def agent_node(state: AgentState) -> dict:
     route = state.get("route")
     if route and route in ROUTE_INSTRUCTIONS:
         messages = list(messages) + [
-            SystemMessage(content=ROUTE_INSTRUCTIONS[route])
+            HumanMessage(content=ROUTE_INSTRUCTIONS[route])
         ]
 
     response = llm_with_tools.invoke(messages)
