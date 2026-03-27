@@ -2,6 +2,8 @@
 Streamlit frontend for the AI Data Analyst Assistant.
 """
 
+import os
+
 import streamlit as st
 
 from config import (
@@ -27,6 +29,7 @@ def init_session_state():
         "provider": DEFAULT_PROVIDER,
         "model_name": "",
         "api_key": "",
+        "tavily_api_key": "",
         "processing": False,
         "tables": [],
         "has_documents": False,
@@ -142,6 +145,17 @@ def render_sidebar():
         default_idx = models.index(default_model) if default_model in models else 0
         selected_model = st.selectbox("Model", models, index=default_idx)
         st.session_state["model_name"] = selected_model
+
+        # Tavily API key for web search
+        tavily_key = st.text_input(
+            "Tavily API Key (web search)",
+            type="password",
+            placeholder="tvly-...",
+            value=st.session_state.get("tavily_api_key", os.environ.get("TAVILY_API_KEY", "")),
+        )
+        st.session_state["tavily_api_key"] = tavily_key
+        if tavily_key:
+            os.environ["TAVILY_API_KEY"] = tavily_key
 
         st.divider()
 
