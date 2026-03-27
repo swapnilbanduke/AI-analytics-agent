@@ -131,6 +131,7 @@ def render_sidebar():
 
         resolved_key = resolve_api_key(provider, api_key_input)
         if resolved_key:
+            st.session_state["_resolved_api_key"] = resolved_key
             st.success("API key set")
         else:
             st.warning("Enter API key or set in .env")
