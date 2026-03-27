@@ -97,12 +97,15 @@ def sql_query(question: str) -> str:
     top/bottom rankings, filtering, grouping, or comparing values."""
     try:
         from sql_agent import run_sql_pipeline
+        from config import resolve_api_key
 
-        # These will be injected via the graph state at runtime
         import streamlit as st
         provider = st.session_state.get("provider", "openai")
         model_name = st.session_state.get("model_name", "")
+        # Try resolved key first, then fall back to resolve_api_key
         api_key_val = st.session_state.get("_resolved_api_key", "")
+        if not api_key_val:
+            api_key_val = resolve_api_key(provider, st.session_state.get("api_key", ""))
 
         result = run_sql_pipeline(
             question=question,

@@ -179,3 +179,29 @@ def _has_docs() -> bool:
         return has_documents()
     except Exception:
         return False
+
+
+@app.get("/graph")
+async def get_graph():
+    """Return the agent graph as a Mermaid diagram."""
+    from graph import build_agent_graph
+
+    tables = _get_tables()
+    has_docs = _has_docs()
+    graph = build_agent_graph(has_database=bool(tables), has_documents=has_docs)
+
+    try:
+        mermaid = graph.get_graph().draw_mermaid()
+    except Exception:
+        mermaid = "graph TD\n    A[classify] --> B[agent]\n    B --> C[tools]\n    C --> B\n    B --> D[END]"
+
+    return {
+        "mermaid": mermaid,
+        "active_tools": {
+            "calculator": True,
+            "web_search": bool(os.environ.get("TAVILY_API_KEY")),
+            "sql_query": bool(tables),
+            "document_search": has_docs,
+        },
+        "tables": tables,
+    }
