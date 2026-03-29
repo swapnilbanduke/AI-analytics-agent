@@ -145,6 +145,9 @@ def render_sidebar():
         resolved_key = resolve_api_key(provider, api_key_input)
         if resolved_key:
             st.session_state["_resolved_api_key"] = resolved_key
+            # Also set env var so tools can find it regardless of session state timing
+            config = get_provider_config(provider)
+            os.environ[config["env_var"]] = resolved_key
             st.success("API key set")
         else:
             st.warning("Enter API key or set in .env")
@@ -246,14 +249,37 @@ def render_graph_tab():
     has_db = bool(st.session_state.get("tables"))
     has_docs = st.session_state.get("has_documents", False)
 
-    # Try to render the real graph from LangGraph
+    # Render the real graph from LangGraph as a visual Mermaid diagram
     try:
         graph = build_agent_graph(has_database=has_db, has_documents=has_docs)
         mermaid_code = graph.get_graph().draw_mermaid()
-        st.markdown(f"```mermaid\n{mermaid_code}\n```")
+
+        # Use Mermaid.js CDN to render in an iframe via st.components
+        import streamlit.components.v1 as components
+
+        mermaid_html = f"""
+        <html>
+        <head>
+            <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+            <style>
+                body {{ margin: 0; background: transparent; }}
+                .mermaid {{ display: flex; justify-content: center; }}
+            </style>
+        </head>
+        <body>
+            <div class="mermaid">
+{mermaid_code}
+            </div>
+            <script>
+                mermaid.initialize({{ startOnLoad: true, theme: 'dark' }});
+            </script>
+        </body>
+        </html>
+        """
+        components.html(mermaid_html, height=420, scrolling=True)
         st.caption("Auto-generated from LangGraph StateGraph")
-    except Exception:
-        pass
+    except Exception as exc:
+        st.warning(f"Could not render graph: {exc}")
 
     st.divider()
     st.markdown("### Detailed Flow")
