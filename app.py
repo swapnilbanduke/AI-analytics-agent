@@ -251,21 +251,55 @@ def render_graph_tab():
 
     # Render the real graph from LangGraph as a visual Mermaid diagram
     try:
-        import re
         graph = build_agent_graph(has_database=has_db, has_documents=has_docs)
-        mermaid_code = graph.get_graph().draw_mermaid()
 
-        # Sanitize LangGraph mermaid output for browser rendering:
-        # 1. Strip YAML front matter (---config:...---)
-        mermaid_code = re.sub(r"^---\n.*?---\n", "", mermaid_code, flags=re.DOTALL)
-        # 2. Remove <p> tags from node labels (they break HTML rendering)
-        mermaid_code = mermaid_code.replace("<p>", "").replace("</p>", "")
-        # 3. Replace &nbsp; HTML entities with spaces
-        mermaid_code = mermaid_code.replace("&nbsp;", " ")
+        # Build clean Mermaid from the actual graph edges
+        # (LangGraph's draw_mermaid() has syntax bugs that break browser rendering)
+        g = graph.get_graph()
+        lines = ["graph TD"]
+        # Define styled nodes
+        lines.append('    START(["Start"]) :::startNode')
+        node_emojis = {
+            "classify": "Classify",
+            "agent": "Agent (LLM)",
+            "tools": "Tools",
+            "handle_error": "Error Handler",
+        }
+        for node_id in g.nodes:
+            if node_id in ("__start__", "__end__"):
+                continue
+            label = node_emojis.get(node_id, node_id)
+            lines.append(f'    {node_id}["{label}"]')
+        lines.append('    FINISH(["End"]) :::endNode')
 
-        # Use Mermaid.js CDN to render via st.components
+        # Add edges from the real graph
+        for edge in g.edges:
+            src = edge.source if hasattr(edge, "source") else edge[0]
+            tgt = edge.target if hasattr(edge, "target") else edge[1]
+            cond = getattr(edge, "data", None) if hasattr(edge, "data") else (edge[2] if len(edge) > 2 else None)
+
+            src_id = "START" if src == "__start__" else src
+            tgt_id = "FINISH" if tgt == "__end__" else tgt
+
+            # Improve edge labels for readability
+            label = cond
+            if cond == "end":
+                label = "done"
+            if src_id == "agent" and tgt_id == "tools":
+                label = "tool calls"
+
+            if label:
+                lines.append(f'    {src_id} -->|"{label}"| {tgt_id}')
+            else:
+                lines.append(f"    {src_id} --> {tgt_id}")
+
+        # Style
+        lines.append("    classDef startNode fill:#2d6a4f,stroke:#52b788,color:#fff")
+        lines.append("    classDef endNode fill:#9d4edd,stroke:#c77dff,color:#fff")
+
+        mermaid_code = "\n".join(lines)
+
         import streamlit.components.v1 as components
-
         mermaid_html = f"""
         <html>
         <head>
@@ -285,8 +319,8 @@ def render_graph_tab():
         </body>
         </html>
         """
-        components.html(mermaid_html, height=420, scrolling=True)
-        st.caption("Auto-generated from LangGraph StateGraph")
+        components.html(mermaid_html, height=450, scrolling=True)
+        st.caption("Live graph — auto-generated from LangGraph StateGraph")
     except Exception as exc:
         st.warning(f"Could not render graph: {exc}")
 
