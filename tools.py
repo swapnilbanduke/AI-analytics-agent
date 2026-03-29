@@ -102,10 +102,18 @@ def sql_query(question: str) -> str:
         import streamlit as st
         provider = st.session_state.get("provider", "openai")
         model_name = st.session_state.get("model_name", "")
-        # Try resolved key first, then fall back to resolve_api_key
+
+        # Multi-layer API key resolution to handle all Streamlit timing scenarios
         api_key_val = st.session_state.get("_resolved_api_key", "")
         if not api_key_val:
-            api_key_val = resolve_api_key(provider, st.session_state.get("api_key", ""))
+            api_key_val = st.session_state.get("api_key", "")
+        if not api_key_val:
+            api_key_val = resolve_api_key(provider, "")
+        # Also ensure the env var is set for any downstream code
+        if api_key_val and provider == "openai" and not os.environ.get("OPENAI_API_KEY"):
+            os.environ["OPENAI_API_KEY"] = api_key_val
+        elif api_key_val and provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
+            os.environ["ANTHROPIC_API_KEY"] = api_key_val
 
         result = run_sql_pipeline(
             question=question,
