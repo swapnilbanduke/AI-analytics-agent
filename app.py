@@ -8,6 +8,8 @@ import streamlit as st
 
 from config import (
     DEFAULT_PROVIDER,
+    disable_langsmith,
+    enable_langsmith,
     get_default_model,
     get_model_values,
     get_provider_config,
@@ -169,6 +171,38 @@ def render_sidebar():
         st.session_state["tavily_api_key"] = tavily_key
         if tavily_key:
             os.environ["TAVILY_API_KEY"] = tavily_key
+
+        # LangSmith tracing (Layer 9)
+        st.divider()
+        st.markdown("### LangSmith Tracing")
+        tracing_on = st.toggle(
+            "Enable tracing",
+            value=st.session_state.get("langsmith_enabled", False),
+            key="langsmith_toggle",
+        )
+        langsmith_key = st.text_input(
+            "LangSmith API Key",
+            type="password",
+            placeholder="lsv2-...",
+            value=st.session_state.get("langsmith_api_key", os.environ.get("LANGCHAIN_API_KEY", "")),
+        )
+        langsmith_project = st.text_input(
+            "Project name",
+            value=st.session_state.get("langsmith_project", os.environ.get("LANGCHAIN_PROJECT", "ai-data-analyst")),
+        )
+        st.session_state["langsmith_api_key"] = langsmith_key
+        st.session_state["langsmith_project"] = langsmith_project
+
+        if tracing_on and langsmith_key:
+            enable_langsmith(langsmith_key, langsmith_project)
+            st.session_state["langsmith_enabled"] = True
+            st.success("Tracing ON")
+            st.caption("View traces at [smith.langchain.com](https://smith.langchain.com)")
+        else:
+            disable_langsmith()
+            st.session_state["langsmith_enabled"] = False
+            if tracing_on and not langsmith_key:
+                st.warning("Enter LangSmith API key to enable tracing")
 
         st.divider()
 
