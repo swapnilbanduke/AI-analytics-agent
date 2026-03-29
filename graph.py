@@ -7,6 +7,8 @@ Layer 3: SQL tool integration.
 Layer 4: Document search tool integration.
 """
 
+import time
+
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
@@ -15,6 +17,25 @@ from config import build_chat_model
 from prompts import CLASSIFICATION_PROMPT, SYSTEM_PROMPT
 from state import AgentState
 from tools import get_all_tools
+
+
+# ========================
+# Rate-limit retry helper
+# ========================
+
+def _invoke_with_retry(llm, messages, max_retries=3):
+    """Invoke LLM with exponential backoff on rate-limit (429) errors."""
+    for attempt in range(max_retries + 1):
+        try:
+            return llm.invoke(messages)
+        except Exception as exc:
+            err_str = str(exc).lower()
+            is_rate_limit = "429" in err_str or "rate limit" in err_str or "rate_limit" in err_str
+            if is_rate_limit and attempt < max_retries:
+                wait = 2 ** attempt  # 1s, 2s, 4s
+                time.sleep(wait)
+                continue
+            raise
 
 
 # ========================
@@ -34,7 +55,7 @@ def classify_question(state: AgentState) -> dict:
     )
 
     llm = build_chat_model(state["provider"], state["model_name"], state.get("api_key"))
-    response = llm.invoke([HumanMessage(content=prompt)])
+    response = _invoke_with_retry(llm, [HumanMessage(content=prompt)])
     route = response.content.strip().lower().strip('"').strip("'")
 
     valid_routes = {"calculation", "web_search", "sql", "document", "direct"}
@@ -73,7 +94,7 @@ def agent_node(state: AgentState) -> dict:
             HumanMessage(content=ROUTE_INSTRUCTIONS[route])
         ]
 
-    response = llm_with_tools.invoke(messages)
+    response = _invoke_with_retry(llm_with_tools, messages)
     return {"messages": [response]}
 
 
