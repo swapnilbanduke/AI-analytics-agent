@@ -251,10 +251,19 @@ def render_graph_tab():
 
     # Render the real graph from LangGraph as a visual Mermaid diagram
     try:
+        import re
         graph = build_agent_graph(has_database=has_db, has_documents=has_docs)
         mermaid_code = graph.get_graph().draw_mermaid()
 
-        # Use Mermaid.js CDN to render in an iframe via st.components
+        # Sanitize LangGraph mermaid output for browser rendering:
+        # 1. Strip YAML front matter (---config:...---)
+        mermaid_code = re.sub(r"^---\n.*?---\n", "", mermaid_code, flags=re.DOTALL)
+        # 2. Remove <p> tags from node labels (they break HTML rendering)
+        mermaid_code = mermaid_code.replace("<p>", "").replace("</p>", "")
+        # 3. Replace &nbsp; HTML entities with spaces
+        mermaid_code = mermaid_code.replace("&nbsp;", " ")
+
+        # Use Mermaid.js CDN to render via st.components
         import streamlit.components.v1 as components
 
         mermaid_html = f"""
@@ -408,17 +417,38 @@ def main():
 
             with st.chat_message("assistant"):
                 with st.spinner("Thinking..."):
-                    result = process_question(
-                        question=prompt,
-                        provider=st.session_state["provider"],
-                        model_name=resolve_model(
-                            st.session_state["provider"],
-                            st.session_state["model_name"],
-                        ),
-                        api_key=resolved_key,
-                        tables=st.session_state.get("tables", []),
-                        has_documents=st.session_state.get("has_documents", False),
-                    )
+                    try:
+                        result = process_question(
+                            question=prompt,
+                            provider=st.session_state["provider"],
+                            model_name=resolve_model(
+                                st.session_state["provider"],
+                                st.session_state["model_name"],
+                            ),
+                            api_key=resolved_key,
+                            tables=st.session_state.get("tables", []),
+                            has_documents=st.session_state.get("has_documents", False),
+                        )
+                    except Exception as exc:
+                        err = str(exc).lower()
+                        if "429" in err or "rate limit" in err or "rate_limit" in err:
+                            result = {
+                                "answer": "Rate limit reached — the AI provider needs a moment. Please wait a few seconds and try again.",
+                                "route": None,
+                                "error": "rate_limit",
+                            }
+                        elif "api key" in err or "authentication" in err or "401" in err:
+                            result = {
+                                "answer": "API key issue — please check the provider and key in the sidebar.",
+                                "route": None,
+                                "error": "auth",
+                            }
+                        else:
+                            result = {
+                                "answer": f"Something went wrong: {exc}",
+                                "route": None,
+                                "error": str(exc),
+                            }
 
                 route = result.get("route")
                 if route:
