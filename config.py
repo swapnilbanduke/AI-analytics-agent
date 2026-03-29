@@ -22,6 +22,23 @@ if LANGSMITH_TRACING:
     os.environ.setdefault("LANGCHAIN_PROJECT", os.getenv("LANGCHAIN_PROJECT", "ai-data-analyst"))
 
 
+def enable_langsmith(api_key: str, project: str = "ai-data-analyst"):
+    """Enable LangSmith tracing at runtime (called from sidebar)."""
+    global LANGSMITH_TRACING
+    os.environ["LANGCHAIN_TRACING_V2"] = "true"
+    os.environ["LANGCHAIN_API_KEY"] = api_key
+    os.environ["LANGCHAIN_PROJECT"] = project
+    LANGSMITH_TRACING = True
+
+
+def disable_langsmith():
+    """Disable LangSmith tracing at runtime."""
+    global LANGSMITH_TRACING
+    os.environ["LANGCHAIN_TRACING_V2"] = "false"
+    os.environ.pop("LANGCHAIN_API_KEY", None)
+    LANGSMITH_TRACING = False
+
+
 DEFAULT_PROVIDER = "openai"
 
 PROVIDER_CATALOG = {
