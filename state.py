@@ -22,7 +22,7 @@ class AgentState(TypedDict):
     api_key: Optional[str]
 
     # Routing
-    route: Optional[str]                 # "calculation", "web_search", "sql", "document", "direct"
+    route: Optional[str]                 # "web_search", "sql", "document", "direct"
     current_step: Optional[str]
 
     # Tool outputs
@@ -40,6 +40,16 @@ class AgentState(TypedDict):
 
     # Document context (Layer 4)
     has_documents: bool
+
+    # Web retrieval validation pipeline
+    web_sources: list[dict[str, Any]]
+    extracted_claims: list[dict[str, Any]]
+    consensus_summary: Optional[str]
+    grounded_answer: Optional[str]
+    confidence_score: Optional[float]
+    confidence_label: Optional[str]
+    search_attempts: int
+    refined_query: Optional[str]
 
     # Multi-agent (Layer 6)
     plan: Optional[dict]

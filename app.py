@@ -7,17 +7,13 @@ import os
 import streamlit as st
 
 from config import (
-    DEFAULT_PROVIDER,
-    disable_langsmith,
-    enable_langsmith,
     get_default_model,
     get_model_values,
     get_provider_config,
-    get_provider_ids,
     resolve_api_key,
     resolve_model,
 )
-from graph import build_agent_graph, process_question
+from graph import process_question
 from styles import inject_styles
 
 
@@ -34,10 +30,9 @@ DOC_EXTENSIONS = {".pdf", ".txt", ".md", ".doc", ".docx"}
 def init_session_state():
     defaults = {
         "chat_history": [],
-        "provider": DEFAULT_PROVIDER,
+        "provider": "openai",
         "model_name": "",
         "api_key": "",
-        "tavily_api_key": "",
         "processing": False,
         "tables": [],
         "has_documents": False,
@@ -120,100 +115,43 @@ def _index_document(uploaded_file, file_name, ext):
 
 def render_sidebar():
     with st.sidebar:
-        st.markdown("### Configuration")
+        st.markdown('<div class="sidebar-brand"><span>MultiAgent</span> AI</div>', unsafe_allow_html=True)
 
-        # Provider selection
-        providers = get_provider_ids()
-        provider_labels = [get_provider_config(p)["label"] for p in providers]
-        selected_idx = st.selectbox(
-            "Provider",
-            range(len(providers)),
-            format_func=lambda i: provider_labels[i],
-            index=providers.index(st.session_state["provider"]),
-        )
-        provider = providers[selected_idx]
-        st.session_state["provider"] = provider
+        st.markdown("#### Model")
+        models = get_model_values("openai")
+        default_model = get_default_model("openai")
+        default_idx = models.index(default_model) if default_model in models else 0
+        selected_model = st.selectbox("Model", models, index=default_idx, label_visibility="collapsed")
+        st.session_state["model_name"] = selected_model
 
-        # API key
-        config = get_provider_config(provider)
+        st.markdown("#### OpenAI API Key")
         api_key_input = st.text_input(
-            config["api_key_label"],
+            "OpenAI API Key",
             type="password",
-            placeholder=config["api_key_help"],
+            placeholder="sk-...",
             value=st.session_state.get("api_key", ""),
+            label_visibility="collapsed",
         )
         st.session_state["api_key"] = api_key_input
 
-        resolved_key = resolve_api_key(provider, api_key_input)
+        resolved_key = resolve_api_key("openai", api_key_input)
         if resolved_key:
             st.session_state["_resolved_api_key"] = resolved_key
-            # Also set env var so tools can find it regardless of session state timing
-            config = get_provider_config(provider)
-            os.environ[config["env_var"]] = resolved_key
-            st.success("API key set")
+            os.environ["OPENAI_API_KEY"] = resolved_key
         else:
-            st.warning("Enter API key or set in .env")
-
-        # Model selection
-        models = get_model_values(provider)
-        default_model = get_default_model(provider)
-        default_idx = models.index(default_model) if default_model in models else 0
-        selected_model = st.selectbox("Model", models, index=default_idx)
-        st.session_state["model_name"] = selected_model
-
-        # Tavily API key for web search
-        tavily_key = st.text_input(
-            "Tavily API Key (web search)",
-            type="password",
-            placeholder="tvly-...",
-            value=st.session_state.get("tavily_api_key", os.environ.get("TAVILY_API_KEY", "")),
-        )
-        st.session_state["tavily_api_key"] = tavily_key
-        if tavily_key:
-            os.environ["TAVILY_API_KEY"] = tavily_key
-
-        # LangSmith tracing (Layer 9)
-        st.divider()
-        st.markdown("### LangSmith Tracing")
-        tracing_on = st.toggle(
-            "Enable tracing",
-            value=st.session_state.get("langsmith_enabled", False),
-            key="langsmith_toggle",
-        )
-        langsmith_key = st.text_input(
-            "LangSmith API Key",
-            type="password",
-            placeholder="lsv2-...",
-            value=st.session_state.get("langsmith_api_key", os.environ.get("LANGCHAIN_API_KEY", "")),
-        )
-        langsmith_project = st.text_input(
-            "Project name",
-            value=st.session_state.get("langsmith_project", os.environ.get("LANGCHAIN_PROJECT", "ai-data-analyst")),
-        )
-        st.session_state["langsmith_api_key"] = langsmith_key
-        st.session_state["langsmith_project"] = langsmith_project
-
-        if tracing_on and langsmith_key:
-            enable_langsmith(langsmith_key, langsmith_project)
-            st.session_state["langsmith_enabled"] = True
-            st.success("Tracing ON")
-            st.caption("View traces at [smith.langchain.com](https://smith.langchain.com)")
-        else:
-            disable_langsmith()
-            st.session_state["langsmith_enabled"] = False
-            if tracing_on and not langsmith_key:
-                st.warning("Enter LangSmith API key to enable tracing")
+            st.info("Enter your OpenAI API key to get started")
 
         st.divider()
 
-        # --- Single unified file upload ---
-        st.markdown("### Upload Files")
-        st.caption("CSV/Excel → SQL database | PDF/Text → Document search")
+        # --- File upload ---
+        st.markdown("#### Upload Files")
+        st.caption("CSV/Excel → SQL | PDF/Text → Doc search")
         uploaded = st.file_uploader(
             "Drop any file",
             type=["csv", "xlsx", "xls", "pdf", "txt", "md"],
             accept_multiple_files=True,
             key="file_uploader",
+            label_visibility="collapsed",
         )
         if uploaded:
             for f in uploaded:
@@ -222,22 +160,18 @@ def render_sidebar():
 
         # Show what's loaded
         if st.session_state.get("tables"):
-            st.caption(f"SQL tables: {', '.join(st.session_state['tables'])}")
+            st.caption(f"Tables: {', '.join(st.session_state['tables'])}")
         if st.session_state.get("has_documents"):
             doc_names = [n for n in st.session_state.get("uploaded_files", [])
                          if os.path.splitext(n)[1].lower() in DOC_EXTENSIONS]
             if doc_names:
-                st.caption(f"Documents: {', '.join(doc_names)}")
+                st.caption(f"Docs: {', '.join(doc_names)}")
 
         st.divider()
 
-        # Clear chat
-        if st.button("Clear Chat", use_container_width=True):
+        if st.button("Clear Chat", use_container_width=True, type="secondary"):
             st.session_state["chat_history"] = []
             st.rerun()
-
-        st.divider()
-        st.caption("AI Data Analyst Assistant")
 
 
 # ========================
@@ -247,149 +181,28 @@ def render_sidebar():
 def render_welcome():
     st.markdown("""
     <div class="welcome-container">
-        <h1>AI Data Analyst</h1>
-        <p>Ask me anything — I'll calculate, search the web, query your data,
-        or search your documents to find the answer.</p>
+        <div class="welcome-logo">&#x26A1;</div>
+        <h1>MultiAgent AI</h1>
+        <p class="subtitle">Ask anything. Upload data, search the web, or query your documents &mdash; powered by intelligent agents that verify every answer.</p>
+        <p class="subtitle-accent">Web Search &bull; SQL Analytics &bull; Document Q&A</p>
     </div>
     """, unsafe_allow_html=True)
 
-    cols = st.columns(4)
+    cols = st.columns(3)
     features = [
-        ("🔢", "Calculator", "Math & percentages"),
-        ("🌐", "Web Search", "Current events & data"),
-        ("🗄️", "SQL Queries", "Ask about your data"),
-        ("📄", "Doc Search", "Search your documents"),
+        ("icon-web", "&#x1F310;", "Web Search", "Verified answers from the web"),
+        ("icon-sql", "&#x1F5C4;", "SQL Queries", "Natural language data analytics"),
+        ("icon-doc", "&#x1F4C4;", "Doc Search", "Instant answers from your files"),
     ]
-    for col, (icon, title, desc) in zip(cols, features):
+    for col, (icon_cls, icon, title, desc) in zip(cols, features):
         with col:
             st.markdown(f"""
             <div class="feature-card">
-                <div style="font-size: 2rem">{icon}</div>
-                <h3>{title}</h3>
-                <p>{desc}</p>
+                <div class="feature-icon {icon_cls}">{icon}</div>
+                <div class="feature-title">{title}</div>
+                <div class="feature-desc">{desc}</div>
             </div>
             """, unsafe_allow_html=True)
-
-
-# ========================
-# Graph visualization
-# ========================
-
-def render_graph_tab():
-    """Render the LangGraph agent architecture as a visual diagram."""
-    st.markdown("### Agent Graph Architecture")
-    st.markdown("This is the live LangGraph that processes every question.")
-
-    has_db = bool(st.session_state.get("tables"))
-    has_docs = st.session_state.get("has_documents", False)
-
-    # Render the real graph from LangGraph as a visual Mermaid diagram
-    try:
-        import base64
-        graph = build_agent_graph(has_database=has_db, has_documents=has_docs)
-
-        # Build clean Mermaid from the actual graph edges
-        # (LangGraph's draw_mermaid() has syntax that breaks browser rendering)
-        g = graph.get_graph()
-        lines = ["graph TD"]
-        lines.append("    START([Start]):::startNode")
-        node_labels = {
-            "classify": "Classify",
-            "agent": "Agent LLM",
-            "tools": "Tools",
-            "handle_error": "Error Handler",
-        }
-        for node_id in g.nodes:
-            if node_id in ("__start__", "__end__"):
-                continue
-            label = node_labels.get(node_id, node_id)
-            lines.append(f"    {node_id}[{label}]")
-        lines.append("    FINISH([End]):::endNode")
-
-        for edge in g.edges:
-            src = edge.source if hasattr(edge, "source") else edge[0]
-            tgt = edge.target if hasattr(edge, "target") else edge[1]
-            cond = getattr(edge, "data", None) if hasattr(edge, "data") else None
-            src_id = "START" if src == "__start__" else src
-            tgt_id = "FINISH" if tgt == "__end__" else tgt
-
-            edge_label = cond
-            if cond == "end":
-                edge_label = "done"
-            if src_id == "agent" and tgt_id == "tools":
-                edge_label = "tool calls"
-
-            if edge_label:
-                lines.append(f"    {src_id} -->|{edge_label}| {tgt_id}")
-            else:
-                lines.append(f"    {src_id} --> {tgt_id}")
-
-        lines.append("    classDef startNode fill:#2d6a4f,stroke:#52b788,color:#fff")
-        lines.append("    classDef endNode fill:#9d4edd,stroke:#c77dff,color:#fff")
-        mermaid_code = "\n".join(lines)
-
-        # Encode mermaid to base64 to avoid all f-string / HTML escaping issues
-        mermaid_b64 = base64.b64encode(mermaid_code.encode()).decode()
-
-        import streamlit.components.v1 as components
-        html_str = (
-            '<html><head>'
-            '<script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>'
-            '<style>body{margin:0;background:transparent;} .mermaid{display:flex;justify-content:center;}</style>'
-            '</head><body>'
-            '<div class="mermaid" id="graph"></div>'
-            '<script>'
-            'mermaid.initialize({startOnLoad:false, theme:"dark"});'
-            f'var code = atob("{mermaid_b64}");'
-            'document.getElementById("graph").textContent = code;'
-            'mermaid.run({nodes: [document.getElementById("graph")]});'
-            '</script>'
-            '</body></html>'
-        )
-        components.html(html_str, height=450, scrolling=True)
-        st.caption("Live graph — auto-generated from LangGraph StateGraph")
-    except Exception as exc:
-        st.warning(f"Could not render graph: {exc}")
-
-    st.divider()
-    st.markdown("### Detailed Flow")
-    st.markdown("""
-```
-User Question
-     │
-     ▼
-┌──────────────┐
-│   Classify   │  LLM picks the best route
-└──────┬───────┘
-       │
-       ├── calculation ──→ 🔢 Calculator Tool
-       ├── web_search ───→ 🌐 Tavily Web Search
-       ├── sql ──────────→ 🗄️ SQL Query Tool (NL → SQL → Execute)
-       ├── document ─────→ 📄 Document Search (ChromaDB RAG)
-       └── direct ───────→ 💬 LLM Direct Answer
-              │
-              ▼
-       ┌─────────────┐
-       │ Agent Loop   │  LLM ↔ Tools (repeat until done)
-       └──────┬──────┘
-              │
-              ▼
-         Final Answer
-```
-""")
-
-    # Show active tools
-    st.markdown("### Active Tools")
-    tools_data = [
-        ("calculator", "Safe math evaluation via AST", True),
-        ("web_search", "Tavily search API", bool(os.environ.get("TAVILY_API_KEY"))),
-        ("sql_query", f"NL2SQL on tables: {', '.join(st.session_state.get('tables', []))}" if has_db else "No data uploaded", has_db),
-        ("document_search", "ChromaDB vector similarity", has_docs),
-    ]
-    for name, desc, active in tools_data:
-        status = "Active" if active else "Inactive"
-        icon = "🟢" if active else "⚪"
-        st.markdown(f"{icon} **{name}** — {desc} *({status})*")
 
 
 # ========================
@@ -397,7 +210,6 @@ User Question
 # ========================
 
 ROUTE_LABELS = {
-    "calculation": "Calculator",
     "web_search": "Web Search",
     "sql": "SQL Query",
     "document": "Doc Search",
@@ -410,14 +222,18 @@ def render_chat():
         role = entry["role"]
         content = entry["content"]
 
-        with st.chat_message(role):
+        with st.chat_message(role, avatar="user" if role == "user" else "assistant"):
             if role == "assistant" and entry.get("route"):
                 route = entry["route"]
                 label = ROUTE_LABELS.get(route, route)
-                st.markdown(
-                    f'<span class="route-badge route-{route}">{label}</span>',
-                    unsafe_allow_html=True,
-                )
+                badge_html = f'<span class="route-badge route-{route}">{label}</span>'
+                confidence = entry.get("confidence")
+                if confidence and route == "web_search":
+                    badge_html += (
+                        f' <span class="confidence-badge confidence-{confidence}">'
+                        f'Confidence: {confidence.title()}</span>'
+                    )
+                st.markdown(badge_html, unsafe_allow_html=True)
             st.markdown(content)
 
 
@@ -427,106 +243,100 @@ def render_chat():
 
 def main():
     st.set_page_config(
-        page_title="AI Data Analyst",
-        page_icon="📊",
+        page_title="MultiAgent AI",
+        page_icon="&#x1F4CA;",
         layout="wide",
+        initial_sidebar_state="auto",
     )
 
     inject_styles()
     init_session_state()
     render_sidebar()
 
-    # Hero header
-    st.markdown("""
-    <div class="hero-header">
-        <h1>📊 AI Data Analyst Assistant</h1>
-        <p>Ask questions — I'll pick the right tool and deliver a polished answer.</p>
-    </div>
-    """, unsafe_allow_html=True)
+    # Show welcome if no chat yet, otherwise show chat
+    if not st.session_state["chat_history"]:
+        render_welcome()
 
-    # Tabs: Chat | Agent Graph
-    chat_tab, graph_tab = st.tabs(["Chat", "Agent Graph"])
+    render_chat()
 
-    with graph_tab:
-        render_graph_tab()
+    # Chat input — always at the bottom
+    if prompt := st.chat_input("Ask me anything..."):
+        resolved_key = resolve_api_key(
+            "openai",
+            st.session_state.get("api_key", ""),
+        )
+        if not resolved_key:
+            st.error("Please enter your OpenAI API key in the sidebar.")
+            return
 
-    with chat_tab:
-        if not st.session_state["chat_history"]:
-            render_welcome()
+        st.session_state["_resolved_api_key"] = resolved_key
 
-        render_chat()
+        st.session_state["chat_history"].append({
+            "role": "user",
+            "content": prompt,
+        })
 
-        # Chat input
-        if prompt := st.chat_input("Ask me anything..."):
-            resolved_key = resolve_api_key(
-                st.session_state["provider"],
-                st.session_state.get("api_key", ""),
-            )
-            if not resolved_key:
-                st.error("Please provide an API key in the sidebar.")
-                return
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-            st.session_state["_resolved_api_key"] = resolved_key
-
-            st.session_state["chat_history"].append({
-                "role": "user",
-                "content": prompt,
-            })
-
-            with st.chat_message("user"):
-                st.markdown(prompt)
-
-            with st.chat_message("assistant"):
-                with st.spinner("Thinking..."):
-                    try:
-                        result = process_question(
-                            question=prompt,
-                            provider=st.session_state["provider"],
-                            model_name=resolve_model(
-                                st.session_state["provider"],
-                                st.session_state["model_name"],
-                            ),
-                            api_key=resolved_key,
-                            tables=st.session_state.get("tables", []),
-                            has_documents=st.session_state.get("has_documents", False),
-                        )
-                    except Exception as exc:
-                        err = str(exc).lower()
-                        if "429" in err or "rate limit" in err or "rate_limit" in err:
-                            result = {
-                                "answer": "Rate limit reached — the AI provider needs a moment. Please wait a few seconds and try again.",
-                                "route": None,
-                                "error": "rate_limit",
-                            }
-                        elif "api key" in err or "authentication" in err or "401" in err:
-                            result = {
-                                "answer": "API key issue — please check the provider and key in the sidebar.",
-                                "route": None,
-                                "error": "auth",
-                            }
-                        else:
-                            result = {
-                                "answer": f"Something went wrong: {exc}",
-                                "route": None,
-                                "error": str(exc),
-                            }
-
-                route = result.get("route")
-                if route:
-                    label = ROUTE_LABELS.get(route, route)
-                    st.markdown(
-                        f'<span class="route-badge route-{route}">{label}</span>',
-                        unsafe_allow_html=True,
+        with st.chat_message("assistant"):
+            with st.spinner("Thinking..."):
+                try:
+                    result = process_question(
+                        question=prompt,
+                        provider="openai",
+                        model_name=resolve_model(
+                            "openai",
+                            st.session_state["model_name"],
+                        ),
+                        api_key=resolved_key,
+                        tables=st.session_state.get("tables", []),
+                        has_documents=st.session_state.get("has_documents", False),
+                        chat_history=st.session_state.get("chat_history", []),
                     )
+                except Exception as exc:
+                    err = str(exc).lower()
+                    exc_detail = f"{type(exc).__name__}: {exc}"
+                    if "429" in err or "rate limit" in err or "rate_limit" in err:
+                        result = {
+                            "answer": f"Rate limit reached — please wait a moment and try again.\n\n`{exc_detail}`",
+                            "route": None,
+                            "error": "rate_limit",
+                        }
+                    elif "api key" in err or "authentication" in err or "401" in err:
+                        result = {
+                            "answer": f"API key issue — please check your key in the sidebar.\n\n`{exc_detail}`",
+                            "route": None,
+                            "error": "auth",
+                        }
+                    else:
+                        result = {
+                            "answer": f"Something went wrong:\n\n`{exc_detail}`",
+                            "route": None,
+                            "error": str(exc),
+                        }
 
-                answer = result.get("answer", "I couldn't generate an answer.")
-                st.markdown(answer)
+            route = result.get("route")
+            confidence = result.get("confidence_label")
+            if route:
+                label = ROUTE_LABELS.get(route, route)
+                badge_html = f'<span class="route-badge route-{route}">{label}</span>'
+                if confidence and route == "web_search":
+                    badge_html += (
+                        f' <span class="confidence-badge confidence-{confidence}">'
+                        f'Confidence: {confidence.title()}</span>'
+                    )
+                st.markdown(badge_html, unsafe_allow_html=True)
 
-            st.session_state["chat_history"].append({
-                "role": "assistant",
-                "content": answer,
-                "route": route,
-            })
+            answer = result.get("answer", "I couldn't generate an answer.")
+            st.markdown(answer)
+
+        st.session_state["chat_history"].append({
+            "role": "assistant",
+            "content": answer,
+            "route": route,
+            "confidence": confidence,
+        })
 
 
 if __name__ == "__main__":

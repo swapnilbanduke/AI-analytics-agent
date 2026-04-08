@@ -1,57 +1,95 @@
 """
 LangChain tool definitions for the AI Data Analyst agent.
 
-Layer 1: calculator + web_search
-Layer 3: sql_query
-Layer 4: document_search
+Tools: web_search, sql_query, document_search
+Utilities: fetch_web_results_structured, score_source_credibility
 """
 
-import ast
-import operator
 import os
+from urllib.parse import urlparse
 
 from langchain_core.tools import tool
 
 
-# ---------- Calculator ----------
+# ========================
+# Source credibility scoring
+# ========================
 
-_SAFE_OPS = {
-    ast.Add: operator.add,
-    ast.Sub: operator.sub,
-    ast.Mult: operator.mul,
-    ast.Div: operator.truediv,
-    ast.Pow: operator.pow,
-    ast.Mod: operator.mod,
-    ast.FloorDiv: operator.floordiv,
-    ast.USub: operator.neg,
+CREDIBILITY_TIERS = {
+    "high": {
+        "suffixes": [".gov", ".edu"],
+        "exact": [
+            "wikipedia.org", "reuters.com", "apnews.com",
+            "bbc.com", "bbc.co.uk", "nature.com",
+            "sciencedirect.com", "scholar.google.com",
+            "who.int", "cdc.gov", "nih.gov",
+        ],
+        "score": 1.0,
+    },
+    "medium": {
+        "suffixes": [".org"],
+        "exact": [
+            "nytimes.com", "washingtonpost.com", "theguardian.com",
+            "bloomberg.com", "cnbc.com", "economist.com", "forbes.com",
+            "techcrunch.com", "arstechnica.com", "wired.com",
+        ],
+        "score": 0.7,
+    },
+    "low": {
+        "suffixes": [],
+        "exact": [],
+        "score": 0.4,
+    },
 }
 
 
-def _safe_eval(node):
-    """Recursively evaluate an AST node using only arithmetic operations."""
-    if isinstance(node, ast.Expression):
-        return _safe_eval(node.body)
-    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
-        return node.value
-    if isinstance(node, ast.UnaryOp) and type(node.op) in _SAFE_OPS:
-        return _SAFE_OPS[type(node.op)](_safe_eval(node.operand))
-    if isinstance(node, ast.BinOp) and type(node.op) in _SAFE_OPS:
-        return _SAFE_OPS[type(node.op)](_safe_eval(node.left), _safe_eval(node.right))
-    raise ValueError(f"Unsupported expression: {ast.dump(node)}")
+def score_source_credibility(domain: str) -> tuple[str, float]:
+    """Return (tier_name, score) for a domain. Pure Python, no LLM."""
+    domain = domain.lower().strip()
+    for tier_name in ("high", "medium"):
+        tier = CREDIBILITY_TIERS[tier_name]
+        for suffix in tier["suffixes"]:
+            if domain.endswith(suffix):
+                return tier_name, tier["score"]
+        for exact in tier["exact"]:
+            if domain == exact or domain.endswith("." + exact):
+                return tier_name, tier["score"]
+    return "low", CREDIBILITY_TIERS["low"]["score"]
 
 
-@tool
-def calculator(expression: str) -> str:
-    """Evaluate a mathematical expression. Use for any arithmetic calculation.
+def fetch_web_results_structured(query: str, max_results: int = 5) -> list[dict]:
+    """Fetch web results with structured metadata for the validation pipeline.
 
-    Examples: "15 * 0.15", "2847 * 0.15", "(100 + 200) / 3", "2 ** 10"
+    Returns list of dicts: [{url, domain, title, content}]
+    Not a LangChain tool — called directly by graph nodes.
     """
     try:
-        tree = ast.parse(expression, mode="eval")
-        result = _safe_eval(tree)
-        return f"{expression} = {result}"
-    except Exception as exc:
-        return f"Error evaluating '{expression}': {exc}"
+        from langchain_community.tools.tavily_search import TavilySearchResults
+
+        api_key = os.getenv("TAVILY_API_KEY", "")
+        if not api_key:
+            return []
+
+        search = TavilySearchResults(max_results=max_results, api_key=api_key)
+        results = search.invoke(query)
+
+        if not results:
+            return []
+
+        structured = []
+        for r in results:
+            url = r.get("url", "")
+            parsed = urlparse(url)
+            domain = parsed.netloc.lower().removeprefix("www.")
+            structured.append({
+                "url": url,
+                "domain": domain,
+                "title": url,
+                "content": r.get("content", ""),
+            })
+        return structured
+    except Exception:
+        return []
 
 
 # ---------- Web Search ----------
@@ -69,7 +107,7 @@ def web_search(query: str) -> str:
             return "Web search is unavailable: TAVILY_API_KEY not set."
 
         search = TavilySearchResults(
-            max_results=3,
+            max_results=5,
             api_key=api_key,
         )
         results = search.invoke(query)
@@ -153,13 +191,13 @@ def document_search(query: str) -> str:
 # ---------- Tool registry ----------
 
 def get_base_tools() -> list:
-    """Return the base tools (calculator + web search)."""
-    return [calculator, web_search]
+    """Return the base tools (web search)."""
+    return [web_search]
 
 
 def get_all_tools(has_database: bool = False, has_documents: bool = False) -> list:
     """Return all available tools based on what's loaded."""
-    tools = [calculator, web_search]
+    tools = [web_search]
     if has_database:
         tools.append(sql_query)
     if has_documents:

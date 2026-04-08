@@ -25,8 +25,33 @@ def calculate(expression: str) -> str:
 
     Examples: "15 * 0.15", "(100 + 200) / 3", "2 ** 10"
     """
-    from tools import calculator
-    return calculator.invoke({"expression": expression})
+    import ast
+    import operator
+
+    ops = {
+        ast.Add: operator.add, ast.Sub: operator.sub,
+        ast.Mult: operator.mul, ast.Div: operator.truediv,
+        ast.Pow: operator.pow, ast.Mod: operator.mod,
+        ast.FloorDiv: operator.floordiv, ast.USub: operator.neg,
+    }
+
+    def _eval(node):
+        if isinstance(node, ast.Expression):
+            return _eval(node.body)
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            return node.value
+        if isinstance(node, ast.UnaryOp) and type(node.op) in ops:
+            return ops[type(node.op)](_eval(node.operand))
+        if isinstance(node, ast.BinOp) and type(node.op) in ops:
+            return ops[type(node.op)](_eval(node.left), _eval(node.right))
+        raise ValueError(f"Unsupported: {ast.dump(node)}")
+
+    try:
+        tree = ast.parse(expression, mode="eval")
+        result = _eval(tree)
+        return f"{expression} = {result}"
+    except Exception as exc:
+        return f"Error: {exc}"
 
 
 @mcp.tool()
