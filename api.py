@@ -19,9 +19,9 @@ from auth import verify_token
 load_dotenv()
 
 app = FastAPI(
-    title="AI Data Analyst API",
-    version="1.0.0",
-    description="Query databases, search documents, and analyze data with AI.",
+    title="MultiAgent AI API",
+    version="2.0.0",
+    description="Query databases, search documents, and analyze data with AI agents.",
 )
 
 
@@ -39,7 +39,8 @@ class QueryRequest(BaseModel):
 class QueryResponse(BaseModel):
     answer: str
     route: str | None = None
-    sql: str | None = None
+    confidence: str | None = None
+    sources: list[str] | None = None
     error: str | None = None
 
 
@@ -88,7 +89,8 @@ async def query(request: QueryRequest, _=Depends(verify_token)):
     return QueryResponse(
         answer=result.get("answer", "No answer generated."),
         route=result.get("route"),
-        sql=None,
+        confidence=result.get("confidence_label"),
+        sources=result.get("sources"),
         error=result.get("error"),
     )
 
@@ -198,7 +200,6 @@ async def get_graph():
     return {
         "mermaid": mermaid,
         "active_tools": {
-            "calculator": True,
             "web_search": bool(os.environ.get("TAVILY_API_KEY")),
             "sql_query": bool(tables),
             "document_search": has_docs,
